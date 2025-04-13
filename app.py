@@ -125,7 +125,9 @@ def main():
     @st.cache_data
     def load_data():
         df = pd.read_csv("resampled-stroke-data.csv")
-        df['bmi'].fillna(df['bmi'].median(), inplace=True)
+        # Fix the pandas warning by using a safer method to fill NaN values
+        df = df.copy()  # Create a copy to avoid chained assignment
+        df['bmi'] = df['bmi'].fillna(df['bmi'].median())  # Use assignment instead of inplace=True
         return df
 
     df = load_data()
@@ -287,67 +289,86 @@ def main():
 
                 # Display explanations in expandable sections with better styling
                 with st.expander("📊 View LIME Explanation", expanded=False):
-                    lime_exp = lime_explainer.explain_instance(
-                        data_row=sample_array[0],
-                        predict_fn=onnx_predict_proba,
-                        num_features=8,
-                        labels=(0, 1)
-                    )
-                    
-                    # Create a bar chart for LIME values with dark theme
-                    lime_values = lime_exp.as_list(label=1)
-                    fig = px.bar(
-                        x=[abs(v[1]) for v in lime_values],
-                        y=[v[0] for v in lime_values],
-                        orientation='h',
-                        title='Feature Importance (LIME)',
-                        labels={'x': 'Impact on Prediction', 'y': 'Feature'}
-                    )
-                    fig.update_layout(
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        font={'color': "#FAFAFA"},
-                        xaxis={'gridcolor': '#262730'},
-                        yaxis={'gridcolor': '#262730'}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    try:
+                        lime_exp = lime_explainer.explain_instance(
+                            data_row=sample_array[0],
+                            predict_fn=onnx_predict_proba,
+                            num_features=8,
+                            labels=(0, 1)
+                        )
+                        
+                        # Create a bar chart for LIME values with dark theme
+                        lime_values = lime_exp.as_list(label=1)
+                        if lime_values:  # Check if lime_values is not empty
+                            fig = px.bar(
+                                x=[abs(v[1]) for v in lime_values],
+                                y=[v[0] for v in lime_values],
+                                orientation='h',
+                                title='Feature Importance (LIME)',
+                                labels={'x': 'Impact on Prediction', 'y': 'Feature'}
+                            )
+                            fig.update_layout(
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                font={'color': "#FAFAFA"},
+                                xaxis={'gridcolor': '#262730'},
+                                yaxis={'gridcolor': '#262730'}
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("LIME explanation returned no values.")
+                            lime_values = []
+                    except Exception as e:
+                        st.warning(f"LIME explanation could not be generated: {str(e)}")
+                        lime_values = []
 
                 with st.expander("📈 View SHAP Explanation", expanded=False):
-                    shap_values_local = shap_explainer.shap_values(input_df_scaled)
-                    
-                    # Handle different return formats from SHAP explainer
-                    # If shap_values_local is a list with two elements (binary classification standard format)
-                    if isinstance(shap_values_local, list) and len(shap_values_local) > 1:
-                        # Use the positive class (index 1) SHAP values
-                        local_shap = shap_values_local[1][0]
-                    else:
-                        # If it's a single array, use it directly
-                        # This handles the case where shap returns a single array of values
-                        local_shap = shap_values_local[0] if isinstance(shap_values_local, list) else shap_values_local
-                    
-                    shap_explanation = sorted(
-                        [(col, input_df_scaled[col].values[0], local_shap[idx]) 
-                         for idx, col in enumerate(input_df_scaled.columns)],
-                        key=lambda x: abs(x[2]),
-                        reverse=True
-                    )
-                    
-                    # Create a bar chart for SHAP values with dark theme
-                    fig = px.bar(
-                        x=[v[2] for v in shap_explanation],
-                        y=[v[0] for v in shap_explanation],
-                        orientation='h',
-                        title='Feature Importance (SHAP)',
-                        labels={'x': 'SHAP Value', 'y': 'Feature'}
-                    )
-                    fig.update_layout(
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        font={'color': "#FAFAFA"},
-                        xaxis={'gridcolor': '#262730'},
-                        yaxis={'gridcolor': '#262730'}
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    try:
+                        shap_values_local = shap_explainer.shap_values(input_df_scaled)
+                        
+                        # Handle different return formats from SHAP explainer
+                        # If shap_values_local is a list with two elements (binary classification standard format)
+                        if isinstance(shap_values_local, list) and len(shap_values_local) > 1:
+                            # Use the positive class (index 1) SHAP values
+                            local_shap = shap_values_local[1][0]
+                        else:
+                            # If it's a single array, use it directly
+                            # This handles the case where shap returns a single array of values
+                            local_shap = shap_values_local[0] if isinstance(shap_values_local, list) else shap_values_local
+                        
+                        # Check if local_shap has the right dimensions
+                        if len(local_shap) == len(input_df_scaled.columns):
+                            shap_explanation = sorted(
+                                [(col, input_df_scaled[col].values[0], local_shap[idx]) 
+                                 for idx, col in enumerate(input_df_scaled.columns)],
+                                key=lambda x: abs(x[2]),
+                                reverse=True
+                            )
+                            
+                            # Create a bar chart for SHAP values with dark theme
+                            fig = px.bar(
+                                x=[v[2] for v in shap_explanation],
+                                y=[v[0] for v in shap_explanation],
+                                orientation='h',
+                                title='Feature Importance (SHAP)',
+                                labels={'x': 'SHAP Value', 'y': 'Feature'}
+                            )
+                            fig.update_layout(
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                font={'color': "#FAFAFA"},
+                                xaxis={'gridcolor': '#262730'},
+                                yaxis={'gridcolor': '#262730'}
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("SHAP explanation could not be generated - dimensions mismatch.")
+                            # Create a dummy explanation for the API
+                            shap_explanation = []
+                    except Exception as e:
+                        st.warning(f"SHAP explanation could not be generated: {str(e)}")
+                        # Create a dummy explanation for the API
+                        shap_explanation = []
 
                 # --- OpenAI Integration --- 
                 # --- Hugging Face Integration --- 
