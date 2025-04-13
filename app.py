@@ -314,7 +314,17 @@ def main():
 
                 with st.expander("📈 View SHAP Explanation", expanded=False):
                     shap_values_local = shap_explainer.shap_values(input_df_scaled)
-                    local_shap = shap_values_local[1][0]
+                    
+                    # Handle different return formats from SHAP explainer
+                    # If shap_values_local is a list with two elements (binary classification standard format)
+                    if isinstance(shap_values_local, list) and len(shap_values_local) > 1:
+                        # Use the positive class (index 1) SHAP values
+                        local_shap = shap_values_local[1][0]
+                    else:
+                        # If it's a single array, use it directly
+                        # This handles the case where shap returns a single array of values
+                        local_shap = shap_values_local[0] if isinstance(shap_values_local, list) else shap_values_local
+                    
                     shap_explanation = sorted(
                         [(col, input_df_scaled[col].values[0], local_shap[idx]) 
                          for idx, col in enumerate(input_df_scaled.columns)],
@@ -359,8 +369,18 @@ def main():
                         
                         # Prepare data for the prompt (same as before)
                         input_details = "\n".join([f"- {key.replace('_', ' ').title()}: {value}" for key, value in input_data.items()])
-                        top_lime_factors = "\n".join([f"- {feat}: {weight:.3f} (LIME impact)" for feat, weight in lime_values[:5]])
-                        top_shap_factors = "\n".join([f"- {feat}: {shap_val:.3f} (SHAP value)" for feat, _, shap_val in shap_explanation[:5]])
+                        
+                        # Safely format LIME factors - make sure lime_values exists and has expected structure
+                        try:
+                            top_lime_factors = "\n".join([f"- {feat}: {weight:.3f} (LIME impact)" for feat, weight in lime_values[:5]])
+                        except (NameError, TypeError, IndexError):
+                            top_lime_factors = "LIME explanation not available"
+                        
+                        # Safely format SHAP factors - make sure shap_explanation exists and has expected structure
+                        try:
+                            top_shap_factors = "\n".join([f"- {feat}: {shap_val:.3f} (SHAP value)" for feat, _, shap_val in shap_explanation[:5]])
+                        except (NameError, TypeError, IndexError):
+                            top_shap_factors = "SHAP explanation not available"
 
                         # Construct the prompt for the instruction-following model
                         # Note: System prompts aren't standard in the basic Inference API like in OpenAI's Chat API
