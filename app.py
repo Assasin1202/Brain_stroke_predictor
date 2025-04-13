@@ -524,5 +524,16 @@ Provide a concise summary in simple, natural language for the patient. Address t
             </div>
         """, unsafe_allow_html=True)
 
+    # Footer with developer information
+    st.markdown("<hr style='border-top: 1px solid #262730;'>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style='text-align: center; color: #FAFAFA; padding: 20px; opacity: 0.7;'>
+            <p>Made by Pranav Pant B21CS088</p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+
 if __name__ == '__main__':
     main()
