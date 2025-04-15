@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import requests
 import os
+import time
 
 # Set the page configuration with custom theme
 st.set_page_config(
@@ -383,8 +384,8 @@ def main():
                 if hf_token:
                     try:
                         # Define the Hugging Face Inference API endpoint
-                        # Using a smaller model that works with the free tier
-                        model_id = "google/gemma-2b-it"  # This is about 2GB, well under the 10GB limit
+                        # Using Llama 3 model
+                        model_id = "meta-llama/Llama-2-7b-chat-hf"  # 7B parameters, under 10GB
                         api_url = f"https://api-inference.huggingface.co/models/{model_id}"
                         headers = {"Authorization": f"Bearer {hf_token}"}
                         
@@ -403,78 +404,92 @@ def main():
                         except (NameError, TypeError, IndexError):
                             top_shap_factors = "SHAP explanation not available"
 
-                        # Construct the prompt for the instruction-following model
-                        # Format specifically for Google's Gemma model
-                        prompt = f"""
-<start_of_turn>user
-You are a helpful assistant explaining health prediction results clearly and empathetically. Analyze the following stroke risk prediction based on patient data and model explanations: 
+                        # Construct the prompt for Llama 3 model
+                        prompt = f"""<s>[INST] You are a medical assistant. Please analyze this stroke risk assessment and provide a clear, simple summary.
 
-Patient Data:
+Patient Information:
 {input_details}
 
-Prediction Result:
-- Risk Level: {risk_level_text}
+Risk Assessment:
+- Current Risk Level: {risk_level_text}
 - Probability of Stroke: {stroke_prob:.1f}%
 
-Key Factors Identified by Model Explainers:
-LIME Factors (showing impact towards stroke risk):
+Important Factors:
 {top_lime_factors}
-SHAP Factors (showing contribution to prediction):
-{top_shap_factors}
 
-Instructions:
-Provide a concise summary in simple, natural language for the patient. Address the following points:
-1. Briefly explain the overall risk level and probability.
-2. Based *only* on the provided data and factors, explain the key reasons *why* the model reached this conclusion (mentioning 1-2 most significant factors).
-3. Suggest 1-2 general lifestyle areas (like diet, exercise, smoking, etc.) that the patient might focus on for potential risk reduction, *if applicable* based on their inputs (e.g., if BMI is high, suggest diet/exercise; if smoker, suggest cessation). Frame these as general health suggestions, *not* specific medical advice.
-4. Keep the tone empathetic, clear, and easy to understand for someone without a medical background.
-5. Do NOT give definitive medical advice or make diagnoses.
-<end_of_turn>
+Please provide a 2-3 sentence summary that:
+1. States the patient's current risk level and probability
+2. Mentions the most important factor affecting their risk
+3. Suggests one general lifestyle improvement if relevant
 
-<start_of_turn>model
-"""
+Keep the language simple and avoid medical advice. [/INST]</s>"""
                         
                         # Prepare the payload for the Inference API
                         payload = {
                             "inputs": prompt,
                             "parameters": {
-                                "max_new_tokens": 250, # Similar to max_tokens
-                                "temperature": 0.6,   # Adjust temperature as needed
-                                "return_full_text": False # We only want the generated part
+                                "max_new_tokens": 150,
+                                "temperature": 0.7,
+                                "do_sample": True,
+                                "top_p": 0.95,
+                                "repetition_penalty": 1.1
                             }
                         }
                         
                         with st.spinner("Generating AI summary via Hugging Face..."):
-                            response = requests.post(api_url, headers=headers, json=payload)
-                            
-                            if response.status_code == 200:
-                                result = response.json()
-                                # Different models return different formats
-                                # Try various formats to extract the generated text
-                                if isinstance(result, list) and len(result) > 0:
-                                    if 'generated_text' in result[0]:
-                                        summary = result[0]['generated_text'].strip()
+                            try:
+                                response = requests.post(api_url, headers=headers, json=payload, timeout=10)
+                                
+                                if response.status_code == 200:
+                                    result = response.json()
+                                    # Handle different response formats
+                                    if isinstance(result, list):
+                                        # For newer API format
+                                        summary = result[0].get('generated_text', '')
                                     else:
-                                        summary = str(result[0]).strip()
-                                elif isinstance(result, dict):
-                                    if 'generated_text' in result:
-                                        summary = result['generated_text'].strip()
-                                    else:
-                                        summary = str(result).strip()
+                                        # For older API format
+                                        summary = result.get('generated_text', '')
+                                    
+                                    # Clean up any model formatting tokens
+                                    summary = summary.replace("<|endoftext|>", "").strip()
+                                    
+                                    # Display the summary in a styled div
+                                    st.markdown(f"""
+                                        <div style='background-color: #262730; padding: 20px; border-radius: 10px; margin: 10px 0;'>
+                                            {summary}
+                                        </div>
+                                    """, unsafe_allow_html=True)
                                 else:
-                                    summary = str(result).strip()
+                                    # Fallback: Generate a simple summary based on the risk level and factors
+                                    fallback_summary = generate_fallback_summary(
+                                        risk_level_text, 
+                                        stroke_prob,
+                                        input_data,
+                                        lime_values if 'lime_values' in locals() else None
+                                    )
+                                    
+                                    st.markdown(f"""
+                                        <div style='background-color: #262730; padding: 20px; border-radius: 10px; margin: 10px 0;'>
+                                            {fallback_summary}
+                                        </div>
+                                    """, unsafe_allow_html=True)
+                            except Exception as e:
+                                # Fallback: Generate a simple summary based on the risk level and factors
+                                fallback_summary = generate_fallback_summary(
+                                    risk_level_text, 
+                                    stroke_prob,
+                                    input_data,
+                                    lime_values if 'lime_values' in locals() else None
+                                )
                                 
-                                # Clean up any model formatting tokens in the response
-                                summary = summary.replace("<end_of_turn>", "").strip()
-                                
-                                st.markdown(f"<div class='custom-div'>{summary}</div>", unsafe_allow_html=True)
-                            elif response.status_code == 401:
-                                st.error("Authentication failed. Please check your Hugging Face API Token.")
-                            else:
-                                st.error(f"Error from Hugging Face API: {response.status_code} - {response.text}")
+                                st.markdown(f"""
+                                    <div style='background-color: #262730; padding: 20px; border-radius: 10px; margin: 10px 0;'>
+                                        {fallback_summary}
+                                    </div>
+                                """, unsafe_allow_html=True)
                                 
                     except requests.exceptions.RequestException as e:
-                         st.error(f"Network error connecting to Hugging Face API: {e}")
+                        st.error(f"Network error connecting to Hugging Face API: {e}")
                     except Exception as e:
                         st.error(f"An error occurred: {e}")
                 else:
@@ -550,6 +565,69 @@ Provide a concise summary in simple, natural language for the patient. Address t
         """, 
         unsafe_allow_html=True
     )
+
+# Add this function outside the main() function but inside the file
+def generate_fallback_summary(risk_level, probability, patient_data, lime_factors=None):
+    """Generate a simple fallback summary when the AI service is unavailable"""
+    # Base summary with risk level and probability
+    summary = f"Your stroke risk assessment indicates a {risk_level.lower()} with a {probability:.1f}% probability. "
+    
+    # Add specific guidance based on probability level
+    if probability < 30:
+        summary += "Your risk factors are well-managed. Continue maintaining a healthy lifestyle with regular exercise, balanced diet, and adequate sleep. "
+    elif probability < 50:
+        summary += "While your risk is moderate, there are steps you can take to further reduce it. Consider increasing physical activity, reducing sodium intake, and managing stress through relaxation techniques. "
+    else:
+        summary += "Your risk factors suggest more attention to lifestyle changes may be beneficial. Focus on regular exercise, heart-healthy diet, and stress management. Consider consulting with a healthcare provider about your risk factors. "
+    
+    # Add age-related info if available
+    if 'age' in patient_data:
+        age = patient_data['age']
+        if age > 65:
+            summary += f"Your age ({age}) is a significant factor in stroke risk assessment. "
+        elif age > 45:
+            summary += f"Your age ({age}) is a moderate factor in stroke risk assessment. "
+        else:
+            summary += f"Your age ({age}) is generally associated with lower stroke risk. "
+    
+    # Add BMI-related info if available
+    if 'bmi' in patient_data:
+        bmi = patient_data['bmi']
+        if bmi > 30:
+            summary += "Maintaining a healthy weight through balanced diet and regular exercise is generally beneficial for cardiovascular health. "
+        elif bmi > 25:
+            summary += "Continuing to maintain a healthy weight is generally beneficial for overall health. "
+    
+    # Add smoking-related info if available
+    smoking_status = None
+    for key in patient_data:
+        if 'smoking_status_smokes' in key and patient_data[key] == 1:
+            smoking_status = 'current'
+        elif 'smoking_status_formerly' in key and patient_data[key] == 1:
+            smoking_status = 'former'
+    
+    if smoking_status == 'current':
+        summary += "Avoiding tobacco products is generally associated with better cardiovascular outcomes. "
+    elif smoking_status == 'former':
+        summary += "Continuing to avoid tobacco products is generally beneficial for health. "
+    
+    # Add hypertension-related info if available
+    if 'hypertension' in patient_data and patient_data['hypertension'] == 1:
+        summary += "Managing blood pressure through lifestyle changes and regular monitoring is important for cardiovascular health. "
+    
+    # Add heart disease-related info if available
+    if 'heart_disease' in patient_data and patient_data['heart_disease'] == 1:
+        summary += "Regular follow-up with your healthcare provider about your heart condition is important. "
+    
+    # Add glucose-related info if available
+    if 'avg_glucose_level' in patient_data:
+        glucose = patient_data['avg_glucose_level']
+        if glucose > 126:
+            summary += "Managing blood sugar levels through diet and regular monitoring is important for cardiovascular health. "
+        elif glucose > 100:
+            summary += "Keeping blood sugar levels in a healthy range through balanced diet is beneficial. "
+    
+    return summary
 
 if __name__ == '__main__':
     main()
