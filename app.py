@@ -383,8 +383,8 @@ def main():
                 if hf_token:
                     try:
                         # Define the Hugging Face Inference API endpoint
-                        # Using Mistral-7B-Instruct as an example
-                        model_id = "mistralai/Mistral-7B-Instruct-v0.1"
+                        # Using a smaller model that works with the free tier
+                        model_id = "google/gemma-2b-it"  # This is about 2GB, well under the 10GB limit
                         api_url = f"https://api-inference.huggingface.co/models/{model_id}"
                         headers = {"Authorization": f"Bearer {hf_token}"}
                         
@@ -404,9 +404,10 @@ def main():
                             top_shap_factors = "SHAP explanation not available"
 
                         # Construct the prompt for the instruction-following model
-                        # Note: System prompts aren't standard in the basic Inference API like in OpenAI's Chat API
+                        # Format specifically for Google's Gemma model
                         prompt = f"""
-[INST] You are a helpful assistant explaining health prediction results clearly and empathetically. Analyze the following stroke risk prediction based on patient data and model explanations: 
+<start_of_turn>user
+You are a helpful assistant explaining health prediction results clearly and empathetically. Analyze the following stroke risk prediction based on patient data and model explanations: 
 
 Patient Data:
 {input_details}
@@ -427,7 +428,10 @@ Provide a concise summary in simple, natural language for the patient. Address t
 2. Based *only* on the provided data and factors, explain the key reasons *why* the model reached this conclusion (mentioning 1-2 most significant factors).
 3. Suggest 1-2 general lifestyle areas (like diet, exercise, smoking, etc.) that the patient might focus on for potential risk reduction, *if applicable* based on their inputs (e.g., if BMI is high, suggest diet/exercise; if smoker, suggest cessation). Frame these as general health suggestions, *not* specific medical advice.
 4. Keep the tone empathetic, clear, and easy to understand for someone without a medical background.
-5. Do NOT give definitive medical advice or make diagnoses. [/INST]
+5. Do NOT give definitive medical advice or make diagnoses.
+<end_of_turn>
+
+<start_of_turn>model
 """
                         
                         # Prepare the payload for the Inference API
@@ -445,13 +449,25 @@ Provide a concise summary in simple, natural language for the patient. Address t
                             
                             if response.status_code == 200:
                                 result = response.json()
-                                # The response format might vary slightly; adjust based on actual API output
-                                # Often it's a list containing a dict with 'generated_text'
-                                if isinstance(result, list) and len(result) > 0 and 'generated_text' in result[0]:
-                                    summary = result[0]['generated_text'].strip()
-                                    st.markdown(f"<div class='custom-div'>{summary}</div>", unsafe_allow_html=True)
+                                # Different models return different formats
+                                # Try various formats to extract the generated text
+                                if isinstance(result, list) and len(result) > 0:
+                                    if 'generated_text' in result[0]:
+                                        summary = result[0]['generated_text'].strip()
+                                    else:
+                                        summary = str(result[0]).strip()
+                                elif isinstance(result, dict):
+                                    if 'generated_text' in result:
+                                        summary = result['generated_text'].strip()
+                                    else:
+                                        summary = str(result).strip()
                                 else:
-                                    st.error(f"Unexpected response format from Hugging Face API: {result}")
+                                    summary = str(result).strip()
+                                
+                                # Clean up any model formatting tokens in the response
+                                summary = summary.replace("<end_of_turn>", "").strip()
+                                
+                                st.markdown(f"<div class='custom-div'>{summary}</div>", unsafe_allow_html=True)
                             elif response.status_code == 401:
                                 st.error("Authentication failed. Please check your Hugging Face API Token.")
                             else:
