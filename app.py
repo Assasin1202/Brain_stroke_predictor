@@ -439,6 +439,7 @@ Keep the language simple and avoid medical advice. [/INST]</s>"""
                         with st.spinner("Generating AI summary via Hugging Face..."):
                             show_fallback = False
                             try:
+                                # Set a timeout of 10 seconds for the API request
                                 response = requests.post(api_url, headers=headers, json=payload, timeout=10)
                                 
                                 # Only process as successful if status code is 200 AND we can parse JSON
@@ -470,36 +471,27 @@ Keep the language simple and avoid medical advice. [/INST]</s>"""
                                         show_fallback = True
                                 else:
                                     show_fallback = True
+                            except requests.exceptions.Timeout:
+                                # If the request times out after 10 seconds, use fallback
+                                show_fallback = True
                             except:
                                 show_fallback = True
                                 
                             # Show fallback if needed
                             if show_fallback:
-                                # Last resort fallback - completely catch all errors
-                                try:
-                                    fallback_summary = generate_fallback_summary(
-                                        risk_level_text, 
-                                        stroke_prob,
-                                        input_data,
-                                        lime_values if 'lime_values' in locals() else None
-                                    )
-                                    
-                                    st.markdown(f"""
-                                        <div style='background-color: #262730; padding: 20px; border-radius: 10px; margin: 10px 0;'>
-                                            {fallback_summary}
-                                        </div>
-                                    """, unsafe_allow_html=True)
-                                except:
-                                    # If everything else fails
-                                    st.markdown(f"""
-                                        <div style='background-color: #262730; padding: 20px; border-radius: 10px; margin: 10px 0;'>
-                                            Your stroke risk assessment indicates a {risk_level_text.lower()} with a {stroke_prob:.1f}% probability. 
-                                            
-                                            {"Continue your healthy lifestyle with regular exercise and a balanced diet." if stroke_prob < 30 else 
-                                             "Consider lifestyle changes including regular exercise, a heart-healthy diet, and stress management to improve your cardiovascular health." if stroke_prob < 70 else
-                                             "Focus on significant lifestyle changes and consult with healthcare providers about your cardiovascular health."}
-                                        </div>
-                                    """, unsafe_allow_html=True)
+                                # Generate a simple summary based on the risk level and factors
+                                fallback_summary = generate_fallback_summary(
+                                    risk_level_text, 
+                                    stroke_prob,
+                                    input_data,
+                                    lime_values if 'lime_values' in locals() else None
+                                )
+                                
+                                st.markdown(f"""
+                                    <div style='background-color: #262730; padding: 20px; border-radius: 10px; margin: 10px 0;'>
+                                        {fallback_summary}
+                                    </div>
+                                """, unsafe_allow_html=True)
                     except requests.exceptions.RequestException as e:
                         st.error(f"Network error connecting to Hugging Face API: {e}")
                     except Exception as e:
